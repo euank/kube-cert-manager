@@ -1,5 +1,5 @@
-hash: 4716b0486c4c56cebc177f7f908b22daa9e20addd72cfadc7a999a97ca12ae78
-updated: 2017-01-18T15:02:19.65481834-05:00
+hash: 01e12de07c8ae4dbc0551dab6495b2ae07a87095cad0ac107e7fc2c27fd388d8
+updated: 2017-03-18T11:28:03.850852752-07:00
 imports:
 - name: cloud.google.com/go
   version: 3b1ae45394a234c385be014e9a488f2bb6eef821
@@ -17,23 +17,19 @@ imports:
   - aws/corehandlers
   - aws/credentials
   - aws/credentials/ec2rolecreds
-  - aws/credentials/endpointcreds
-  - aws/credentials/stscreds
   - aws/defaults
   - aws/ec2metadata
-  - aws/endpoints
   - aws/request
   - aws/session
-  - aws/signer/v4
+  - private/endpoints
   - private/protocol
   - private/protocol/query
   - private/protocol/query/queryutil
   - private/protocol/rest
   - private/protocol/restxml
   - private/protocol/xml/xmlutil
-  - private/waiter
+  - private/signer/v4
   - service/route53
-  - service/sts
 - name: github.com/boltdb/bolt
   version: a705895fdad108f053eae7ee011ed94a0541ee13
 - name: github.com/davecgh/go-spew
@@ -104,7 +100,7 @@ imports:
 - name: github.com/PuerkitoBio/urlesc
   version: 5bd2802263f21d8788851d5305584c82a5c75d7e
 - name: github.com/spf13/pflag
-  version: c7e63cf4530bcd3ba943729cee0efeff2ebea63f
+  version: 5ccb023bc27df288a957c5e994cd44fd19619465
 - name: github.com/timewasted/linode
   version: 37e84520dcf74488f67654f9c775b9752c232dc1
   subpackages:
@@ -204,7 +200,7 @@ imports:
 - name: gopkg.in/yaml.v2
   version: 53feefa2559fb8dfa8d81baad31be332c97d6c77
 - name: k8s.io/client-go
-  version: b22087a53becae45931ed72d5e0f12e0031d771a
+  version: e121606b0d09b2e1c467183ee46217fa85a6b672
   subpackages:
   - pkg/api
   - pkg/api/meta

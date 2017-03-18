@@ -20,7 +20,7 @@ import:
   - providers/dns/route53
   - providers/dns/vultr
 - package: k8s.io/client-go
-  version: v2.0.0-alpha.0
+  version: v2.0.0
   subpackages:
   - pkg/api/unversioned
   - pkg/api/v1
