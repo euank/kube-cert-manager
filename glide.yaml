@@ -25,7 +25,3 @@ import:
   - pkg/api/unversioned
   - pkg/api/v1
   - pkg/apis/extensions/v1beta1
-- package: k8s.io/apimachinery
-  subpackages:
-  - pkg/api/errors
-
