@@ -25,7 +25,11 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api"
+	"k8s.io/client-go/pkg/api/unversioned"
 	"k8s.io/client-go/pkg/api/v1"
+	"k8s.io/client-go/pkg/runtime"
+	"k8s.io/client-go/pkg/watch/versioned"
 	"k8s.io/client-go/rest"
 
 	"github.com/boltdb/bolt"
@@ -113,8 +117,32 @@ func main() {
 		log.Fatalf("Error trying to to create k8s client: %v", err)
 	}
 
+	// Create a client for the certificate TPR too
+	tprConfig := &(*k8sConfig)
+	groupVersion := unversioned.GroupVersion{
+		Group:   "stable.k8s.psg.io",
+		Version: "v1",
+	}
+	tprConfig.GroupVersion = &groupVersion
+	tprConfig.APIPath = "/apis"
+	schemeBuilder := runtime.NewSchemeBuilder(
+		func(scheme *runtime.Scheme) error {
+			scheme.AddKnownTypes(
+				groupVersion,
+				&Certificate{},
+				&CertificateList{},
+			)
+			return nil
+		})
+	versioned.AddToGroupVersion(api.Scheme, groupVersion)
+	schemeBuilder.AddToScheme(api.Scheme)
+	certClient, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		log.Fatalf("error creating TPR Certificate client: %v", err)
+	}
+
 	// Create the processor
-	p := NewCertProcessor(k8sClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
+	p := NewCertProcessor(k8sClient, certClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
 
 	// Asynchronously start watching and refreshing certs
 	wg := sync.WaitGroup{}

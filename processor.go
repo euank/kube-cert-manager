@@ -67,6 +67,7 @@ type CertProcessor struct {
 // NewCertProcessor creates and populates a CertProcessor
 func NewCertProcessor(
 	k8s *kubernetes.Clientset,
+	certClient *kubernetes.Clientset,
 	acmeURL string,
 	certSecretPrefix string,
 	certNamespace string,
@@ -77,7 +78,7 @@ func NewCertProcessor(
 	defaultEmail string,
 	db *bolt.DB) *CertProcessor {
 	return &CertProcessor{
-		k8s:              K8sClient{c: k8s},
+		k8s:              K8sClient{c: k8s, certClient: certClient},
 		acmeURL:          acmeURL,
 		certSecretPrefix: certSecretPrefix,
 		certNamespace:    certNamespace,

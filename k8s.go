@@ -43,8 +43,10 @@ const (
 
 // K8sClient provides convenience functions for handling resources this project
 // cares about
+// TODO: merge the two clients
 type K8sClient struct {
-	c *kubernetes.Clientset
+	c          *kubernetes.Clientset
+	certClient *kubernetes.Clientset
 }
 
 type WatchEvent struct {
@@ -334,6 +336,7 @@ func (k K8sClient) monitorCertificateEvents(namespace string, done <-chan struct
 			}
 		}
 	}
+
 	source := cache.NewListWatchFromClient(k.c.Extensions().RESTClient(), "certificates", v1.NamespaceAll, fields.Everything())
 	_, controller := cache.NewInformer(source, &Certificate{}, 0, cache.ResourceEventHandlerFuncs{
 		AddFunc:    evFunc("ADDED"),
