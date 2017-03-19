@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -26,21 +25,27 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/xenolf/lego/acme"
+	"k8s.io/client-go/kubernetes"
+	kerrors "k8s.io/client-go/pkg/api/errors"
 	"k8s.io/client-go/pkg/api/unversioned"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/pkg/fields"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 )
 
 const (
-	apiHost            = "http://127.0.0.1:8001"
-	certEndpoint       = "/apis/%s/v1/namespaces/%s/certificates"
-	certEndpointAll    = "/apis/%s/v1/certificates"
-	ingressEndpoint    = "/apis/extensions/v1beta1/namespaces/%s/ingresses"
-	ingressEndpointAll = "/apis/extensions/v1beta1/ingresses"
-	secretsEndpoint    = "/api/v1/namespaces/%s/secrets"
-	secretsEndpointAll = "/api/v1/secrets"
-	eventsEndpoint     = "/api/v1/namespaces/%s/events"
+	certEndpoint    = "/apis/%s/v1/namespaces/%s/certificates"
+	certEndpointAll = "/apis/%s/v1/certificates"
+	eventsEndpoint  = "/api/v1/namespaces/%s/events"
 )
+
+// K8sClient provides convenience functions for handling resources this project
+// cares about
+type K8sClient struct {
+	c *kubernetes.Clientset
+}
 
 type WatchEvent struct {
 	Type   string          `json:"type"`
@@ -93,7 +98,7 @@ func ingressReference(ing v1beta1.Ingress, path string) v1.ObjectReference {
 	}
 }
 
-func createEvent(ev v1.Event) {
+func (k K8sClient) createEvent(ev v1.Event) {
 	now := unversioned.Now()
 	ev.Name = fmt.Sprintf("%s.%x", ev.InvolvedObject.Name, now.UnixNano())
 	if ev.Kind == "" {
@@ -116,14 +121,15 @@ func createEvent(ev v1.Event) {
 		log.Println("internal error:", err)
 		return
 	}
-	resp, err := http.Post(apiHost+namespacedEndpoint(eventsEndpoint, ev.Namespace), "application/json", bytes.NewReader(b))
-	if err != nil {
-		log.Println("internal error:", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		log.Println("unexpected HTTP status code while creating event:", resp.StatusCode)
+	resp := k.c.Extensions().RESTClient().Post().AbsPath(eventsEndpoint).Body(b).Do()
+	if resp.Error() != nil {
+		switch e := resp.Error().(type) {
+		case *kerrors.StatusError:
+			log.Printf("unexpected HTTP status code while creating event: %d\n", e.Status().Code)
+		default:
+			log.Println("internal error:", err)
+			return
+		}
 	}
 }
 
@@ -230,129 +236,55 @@ func (certDetails *ACMECertDetails) ToCertResource() acme.CertificateResource {
 	}
 }
 
-func getSecret(namespace string, key string) (*v1.Secret, error) {
-	// Run the http request
-	url := apiHost + namespacedEndpoint(secretsEndpoint, namespace) + "/" + key
-	resp, err := http.Get(url)
+func (k K8sClient) getSecret(namespace string, key string) (*v1.Secret, error) {
+	secret, err := k.c.Core().Secrets(namespace).Get(key)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Error while running http request on url: %v", url)
+		switch kerr := err.(type) {
+		case kerrors.APIStatus:
+			if kerr.Status().Code == http.StatusNotFound {
+				return nil, nil
+			} else {
+				return nil, errors.Wrapf(err, "Unexpected status code  whle fetching secret %q: %v", key, kerr.Status())
+			}
+		}
+		return nil, errors.Wrapf(err, "Unexpected error while fetching secret %q", key)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
-	} else if resp.StatusCode != http.StatusOK {
-		return nil, errors.Errorf("Unexpected http status response while fetching secret on url %q: %v", url, resp.Status)
-	}
-
-	// Deserialize the secret
-	var secret v1.Secret
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&secret)
-	if err != nil {
-		return nil, errors.Wrap(err, "Error while deserializing secret")
-	}
-
-	return &secret, nil
+	return secret, nil
 }
 
-func saveSecret(namespace string, secret *v1.Secret, isUpdate bool) error {
+func (k K8sClient) saveSecret(namespace string, secret *v1.Secret, isUpdate bool) error {
 	if secret.Name == "" {
 		return errors.New("Secret name must be specified in metadata")
 	}
 
-	// Serialize the secret
-	buffer := new(bytes.Buffer)
-	err := json.NewEncoder(buffer).Encode(secret)
-	if err != nil {
-		return errors.Wrapf(err, "Error while encoding secret: %v", err)
-	}
-
-	// Determine http method and url
-	var url string
-	var method string
 	if isUpdate {
-		url = apiHost + namespacedEndpoint(secretsEndpoint, namespace) + "/" + secret.Name
-		method = "PUT"
+		_, err := k.c.Secrets(namespace).Update(secret)
+		return err
 	} else {
-		url = apiHost + namespacedEndpoint(secretsEndpoint, namespace)
-		method = "POST"
+		_, err := k.c.Secrets(namespace).Create(secret)
+		return err
 	}
-
-	req, err := http.NewRequest(method, url, buffer)
-	if err != nil {
-		return errors.Wrapf(err, "Error while creating http request on url: %v", url)
-	}
-	req.Header.Add("Content-Type", "application/json")
-
-	// Actually do the request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return errors.Wrapf(err, "Error while running http request on url: %v", url)
-	}
-	defer resp.Body.Close()
-
-	if isUpdate && resp.StatusCode != 200 {
-		return errors.Errorf("Non OK status while updating secret: %v", resp.Status)
-	} else if !isUpdate && resp.StatusCode != 201 {
-		return errors.Errorf("Non Created status while creating secret: %v", resp.Status)
-	}
-
-	return nil
 }
 
-func deleteSecret(namespace string, key string) error {
-	// Create DELETE request
-	url := apiHost + namespacedEndpoint(secretsEndpoint, namespace) + "/" + key
-	req, err := http.NewRequest("DELETE", url, nil)
-	if err != nil {
-		return errors.Wrapf(err, "Error while creating http request for url: %v", url)
-	}
-
-	// Actually do the request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return errors.Wrapf(err, "Error while running http request on url: %v", url)
-	}
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("Deleting %s secret failed: %s", key, resp.Status)
-	}
-
-	return nil
+func (k K8sClient) deleteSecret(namespace string, key string) error {
+	return k.c.Secrets(namespace).Delete(key, nil)
 }
 
-func getSecrets(endpoint string) ([]v1.Secret, error) {
-	var resp *http.Response
-	var err error
-
-	for {
-		resp, err = http.Get(apiHost + endpoint)
-		if err != nil {
-			log.Printf("Error while retrieving certificate: %v. Retrying in 5 seconds", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		break
-	}
-
-	var secretList v1.SecretList
-	err = json.NewDecoder(resp.Body).Decode(&secretList)
+func (k K8sClient) getSecrets(namespace string) ([]v1.Secret, error) {
+	list, err := k.c.Secrets(namespace).List(v1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
-
-	return secretList.Items, nil
+	return list.Items, nil
 }
 
-func getCertificates(endpoint string) ([]Certificate, error) {
-	var resp *http.Response
-	var err error
+func (k K8sClient) getCertificates(endpoint string) ([]Certificate, error) {
+	var resp rest.Result
 
 	for {
-		resp, err = http.Get(apiHost + endpoint)
-		if err != nil {
-			log.Printf("Error while retrieving certificate: %v. Retrying in 5 seconds", err)
+		resp := k.c.Extensions().RESTClient().Get().AbsPath(endpoint).Do()
+		if resp.Error() != nil {
+			log.Printf("Error while retrieving certificate: %v. Retrying in 5 seconds", resp.Error())
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -360,7 +292,11 @@ func getCertificates(endpoint string) ([]Certificate, error) {
 	}
 
 	var certList CertificateList
-	err = json.NewDecoder(resp.Body).Decode(&certList)
+	body, err := resp.Raw()
+	if err != nil {
+		return nil, err
+	}
+	err = json.NewDecoder(bytes.NewReader(body)).Decode(&certList)
 	if err != nil {
 		return nil, err
 	}
@@ -368,126 +304,79 @@ func getCertificates(endpoint string) ([]Certificate, error) {
 	return certList.Items, nil
 }
 
-func getIngresses(endpoint string) ([]v1beta1.Ingress, error) {
-	var resp *http.Response
-	var err error
-
+func (k K8sClient) getIngresses(namespace string) ([]v1beta1.Ingress, error) {
 	for {
-		resp, err = http.Get(apiHost + endpoint)
+		ingresses, err := k.c.Extensions().Ingresses(namespace).List(v1.ListOptions{})
 		if err != nil {
 			log.Printf("Error while retrieving ingress: %v. Retrying in 5 seconds", err)
 			time.Sleep(5 * time.Second)
 			continue
+		} else {
+			return ingresses.Items, nil
 		}
-		break
 	}
-
-	var ingressList v1beta1.IngressList
-	err = json.NewDecoder(resp.Body).Decode(&ingressList)
-	if err != nil {
-		return nil, err
-	}
-
-	return ingressList.Items, nil
 }
 
-func monitorEvents(endpoint string) (<-chan WatchEvent, <-chan error) {
-	events := make(chan WatchEvent)
-	errc := make(chan error, 1)
-	go func() {
-		resourceVersion := "0"
-		for {
-			watchURL := apiHost + endpoint
-			watchURL, _ = addURLArgument(watchURL, "watch", "true")
-			watchURL, _ = addURLArgument(watchURL, "resourceVersion", resourceVersion)
-			resp, err := http.Get(watchURL)
-			if err != nil {
-				errc <- err
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			if resp.StatusCode != 200 {
-				errc <- errors.New("Invalid status code: " + resp.Status)
-				time.Sleep(5 * time.Second)
-				continue
-			}
-
-			decoder := json.NewDecoder(resp.Body)
-			for {
-				var event WatchEvent
-				err = decoder.Decode(&event)
-				if err != nil {
-					if err != io.EOF {
-						errc <- err
-					}
-					break
-				}
-				var header struct {
-					Metadata struct {
-						ResourceVersion string `json:"resourceVersion"`
-					} `json:"metadata"`
-				}
-				if err := json.Unmarshal([]byte(event.Object), &header); err != nil {
-					errc <- err
-					break
-				}
-				resourceVersion = header.Metadata.ResourceVersion
-				events <- event
-			}
-		}
-	}()
-
-	return events, errc
-}
-
-func monitorCertificateEvents(endpoint string) (<-chan CertificateEvent, <-chan error) {
-	rawEvents, rawErrc := monitorEvents(endpoint)
+func (k K8sClient) monitorCertificateEvents(namespace string, done <-chan struct{}) <-chan CertificateEvent {
 	events := make(chan CertificateEvent)
-	errc := make(chan error, 1)
-	go func() {
-		for {
-			select {
-			case ev := <-rawEvents:
-				var event CertificateEvent
-				event.Type = ev.Type
-				err := json.Unmarshal([]byte(ev.Object), &event.Object)
-				if err != nil {
-					errc <- err
-					continue
-				}
-				events <- event
-			case err := <-rawErrc:
-				errc <- err
+
+	// curry func for add/update/delete events
+	evFunc := func(evType string) func(obj interface{}) {
+		return func(obj interface{}) {
+			cert, ok := obj.(*Certificate)
+			if !ok {
+				log.Printf("could not convert %#v into Certificate", obj)
+				return
+			}
+			events <- CertificateEvent{
+				Type:   evType,
+				Object: *cert,
 			}
 		}
-	}()
+	}
+	source := cache.NewListWatchFromClient(k.c.Extensions().RESTClient(), "certificates", v1.NamespaceAll, fields.Everything())
+	_, controller := cache.NewInformer(source, &Certificate{}, 0, cache.ResourceEventHandlerFuncs{
+		AddFunc:    evFunc("ADDED"),
+		DeleteFunc: evFunc("DELETED"),
+		UpdateFunc: func(old, new interface{}) {
+			evFunc("MODIFIED")(new)
+		},
+	})
 
-	return events, errc
+	go controller.Run(done)
+
+	return events
 }
 
-func monitorIngressEvents(endpoint string) (<-chan IngressEvent, <-chan error) {
-	rawEvents, rawErrc := monitorEvents(endpoint)
+func (k K8sClient) monitorIngressEvents(namespace string, done <-chan struct{}) <-chan IngressEvent {
 	events := make(chan IngressEvent)
-	errc := make(chan error, 1)
-	go func() {
-		for {
-			select {
-			case ev := <-rawEvents:
-				var event IngressEvent
-				event.Type = ev.Type
-				err := json.Unmarshal([]byte(ev.Object), &event.Object)
-				if err != nil {
-					errc <- err
-					continue
-				}
-				events <- event
-			case err := <-rawErrc:
-				errc <- err
+
+	// curry func for add/update/delete events
+	evFunc := func(evType string) func(obj interface{}) {
+		return func(obj interface{}) {
+			ing, ok := obj.(*v1beta1.Ingress)
+			if !ok {
+				log.Printf("could not convert %#v into Certificate", obj)
+				return
+			}
+			events <- IngressEvent{
+				Type:   evType,
+				Object: *ing,
 			}
 		}
-	}()
+	}
+	source := cache.NewListWatchFromClient(k.c.Extensions().RESTClient(), "ingresses", v1.NamespaceAll, fields.Everything())
+	_, controller := cache.NewInformer(source, &v1beta1.Ingress{}, 0, cache.ResourceEventHandlerFuncs{
+		AddFunc:    evFunc("ADDED"),
+		DeleteFunc: evFunc("DELETED"),
+		UpdateFunc: func(old, new interface{}) {
+			evFunc("MODIFIED")(new)
+		},
+	})
 
-	return events, errc
+	go controller.Run(done)
+
+	return events
 }
 
 func namespacedEndpoint(endpoint, namespace string) string {

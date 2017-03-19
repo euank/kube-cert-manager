@@ -24,6 +24,10 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api/v1"
+	"k8s.io/client-go/rest"
+
 	"github.com/boltdb/bolt"
 )
 
@@ -100,8 +104,17 @@ func main() {
 
 	log.Println("Starting Kubernetes Certificate Controller...")
 
+	k8sConfig, err := rest.InClusterConfig()
+	if err != nil {
+		log.Fatalf("Error trying to configure k8s client: %v", err)
+	}
+	k8sClient, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		log.Fatalf("Error trying to to create k8s client: %v", err)
+	}
+
 	// Create the processor
-	p := NewCertProcessor(acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
+	p := NewCertProcessor(k8sClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
 
 	// Asynchronously start watching and refreshing certs
 	wg := sync.WaitGroup{}
@@ -110,16 +123,14 @@ func main() {
 	if len(p.namespaces) == 0 {
 		wg.Add(1)
 		go p.watchKubernetesEvents(
-			addLabelSelector(p, namespacedAllCertEndpoint(certEndpointAll, p.certNamespace)),
-			addLabelSelector(p, ingressEndpointAll),
+			v1.NamespaceAll,
 			&wg,
 			doneChan)
 	} else {
 		for _, namespace := range p.namespaces {
 			wg.Add(1)
 			go p.watchKubernetesEvents(
-				addLabelSelector(p, namespacedCertEndpoint(certEndpoint, p.certNamespace, namespace)),
-				addLabelSelector(p, namespacedEndpoint(ingressEndpoint, namespace)),
+				namespace,
 				&wg,
 				doneChan,
 			)
