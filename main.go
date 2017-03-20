@@ -29,8 +29,9 @@ import (
 	"k8s.io/client-go/pkg/api/unversioned"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/runtime"
-	"k8s.io/client-go/pkg/watch/versioned"
+	"k8s.io/client-go/pkg/runtime/serializer"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/boltdb/bolt"
 )
@@ -53,6 +54,7 @@ func (lf *listFlag) Set(s string) error {
 func main() {
 	// Parse command line
 	var (
+		kubeconfig       string
 		acmeURL          string
 		syncInterval     int
 		certSecretPrefix string
@@ -65,6 +67,7 @@ func main() {
 		defaultEmail     string
 	)
 
+	flag.StringVar(&kubeconfig, "kubeconfig", "", "The kubeconfig to use; if empty the in-cluster config will be used")
 	flag.StringVar(&acmeURL, "acme-url", "", "The URL to the acme directory to use")
 	flag.StringVar(&certSecretPrefix, "cert-secret-prefix", "", "The prefix to use for certificate secrets")
 	flag.IntVar(&syncInterval, "sync-interval", 30, "Sync interval in seconds")
@@ -108,7 +111,12 @@ func main() {
 
 	log.Println("Starting Kubernetes Certificate Controller...")
 
-	k8sConfig, err := rest.InClusterConfig()
+	var k8sConfig *rest.Config
+	if kubeconfig == "" {
+		k8sConfig, err = rest.InClusterConfig()
+	} else {
+		k8sConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	}
 	if err != nil {
 		log.Fatalf("Error trying to configure k8s client: %v", err)
 	}
@@ -125,24 +133,38 @@ func main() {
 	}
 	tprConfig.GroupVersion = &groupVersion
 	tprConfig.APIPath = "/apis"
+	tprConfig.ContentType = runtime.ContentTypeJSON
+	tprConfig.NegotiatedSerializer = serializer.DirectCodecFactory{CodecFactory: api.Codecs}
 	schemeBuilder := runtime.NewSchemeBuilder(
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
 				groupVersion,
 				&Certificate{},
 				&CertificateList{},
+				&api.ListOptions{},
+				&api.DeleteOptions{},
 			)
 			return nil
 		})
-	versioned.AddToGroupVersion(api.Scheme, groupVersion)
 	schemeBuilder.AddToScheme(api.Scheme)
-	certClient, err := kubernetes.NewForConfig(k8sConfig)
+	certClient, err := rest.RESTClientFor(k8sConfig)
 	if err != nil {
 		log.Fatalf("error creating TPR Certificate client: %v", err)
 	}
 
+	result := certClient.Get().Resource("certificates").Do()
+	fmt.Println(result.Error())
+	b, _ := result.Raw()
+	fmt.Println(string(b))
+	var certs CertificateList
+	fmt.Println(result.Into(&certs))
+	fmt.Printf("%+v\n", certs)
+	if true {
+		os.Exit(0)
+	}
+
 	// Create the processor
-	p := NewCertProcessor(k8sClient, certClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
+	p := NewCertProcessor(k8sClient, k8sClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
 
 	// Asynchronously start watching and refreshing certs
 	wg := sync.WaitGroup{}

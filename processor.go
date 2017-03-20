@@ -200,13 +200,13 @@ func (p *CertProcessor) getCertificates() ([]Certificate, error) {
 	var certificates []Certificate
 	if len(p.namespaces) == 0 {
 		var err error
-		certificates, err = p.k8s.getCertificates(addLabelSelector(p, namespacedAllCertEndpoint(certEndpointAll, p.certNamespace)))
+		certificates, err = p.k8s.getCertificates(v1.NamespaceAll)
 		if err != nil {
 			return nil, errors.Wrap(err, "Error while fetching certificate list")
 		}
 	} else {
 		for _, namespace := range p.namespaces {
-			certs, err := p.k8s.getCertificates(addLabelSelector(p, namespacedCertEndpoint(certEndpoint, p.certNamespace, namespace)))
+			certs, err := p.k8s.getCertificates(namespace)
 			if err != nil {
 				return nil, errors.Wrap(err, "Error while fetching certificate list")
 			}
@@ -570,7 +570,7 @@ func (p *CertProcessor) gcSecrets() error {
 	}
 	usedSecrets := map[string]bool{}
 	for _, cert := range certs {
-		usedSecrets[cert.Namespace+" "+p.secretName(cert)] = true
+		usedSecrets[cert.Metadata.Namespace+" "+p.secretName(cert)] = true
 	}
 	for _, secret := range secrets {
 		// Only check for the deprecated "enabled" annotation if not using the "class" feature
@@ -617,7 +617,7 @@ func ingressCertificates(p *CertProcessor, ingress v1beta1.Ingress) []Certificat
 				APIVersion: "v1",
 				Kind:       "Certificate",
 			},
-			ObjectMeta: v1.ObjectMeta{
+			Metadata: v1.ObjectMeta{
 				Namespace: ingress.Namespace,
 			},
 			Spec: CertificateSpec{
@@ -664,7 +664,7 @@ func (p *CertProcessor) processIngress(ingress v1beta1.Ingress) {
 				APIVersion: "v1",
 				Kind:       "Certificate",
 			},
-			ObjectMeta: v1.ObjectMeta{
+			Metadata: v1.ObjectMeta{
 				Namespace: ingress.Namespace,
 			},
 			Spec: CertificateSpec{
@@ -720,8 +720,8 @@ func (p *CertProcessor) processIngress(ingress v1beta1.Ingress) {
 }
 
 func certificateNamespace(c Certificate) string {
-	if c.Namespace != "" {
-		return c.Namespace
+	if c.Metadata.Namespace != "" {
+		return c.Metadata.Namespace
 	}
 	return "default"
 }

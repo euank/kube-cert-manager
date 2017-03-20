@@ -26,6 +26,7 @@ import (
 	"github.com/xenolf/lego/acme"
 	"k8s.io/client-go/kubernetes"
 	kerrors "k8s.io/client-go/pkg/api/errors"
+	"k8s.io/client-go/pkg/api/meta"
 	"k8s.io/client-go/pkg/api/unversioned"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
@@ -35,9 +36,7 @@ import (
 )
 
 const (
-	certEndpoint    = "/apis/%s/v1/namespaces/%s/certificates"
-	certEndpointAll = "/apis/%s/v1/certificates"
-	eventsEndpoint  = "/api/v1/namespaces/%s/events"
+	eventsEndpoint = "/api/v1/namespaces/%s/events"
 )
 
 // K8sClient provides convenience functions for handling resources this project
@@ -60,8 +59,24 @@ type CertificateEvent struct {
 
 type Certificate struct {
 	unversioned.TypeMeta `json:",inline"`
-	v1.ObjectMeta        `json:"metadata"`
+	Metadata             v1.ObjectMeta   `json:"metadata"`
 	Spec                 CertificateSpec `json:"spec"`
+}
+
+func (c *Certificate) GetObjectKind() unversioned.ObjectKind {
+	return &c.TypeMeta
+}
+
+func (c *Certificate) GetObjectMeta() meta.Object {
+	return &c.Metadata
+}
+
+func (c *CertificateList) GetObjectKind() unversioned.ObjectKind {
+	return &c.TypeMeta
+}
+
+func (c *CertificateList) GetObjectMeta() unversioned.List {
+	return &c.Metadata
 }
 
 type CertificateSpec struct {
@@ -73,8 +88,8 @@ type CertificateSpec struct {
 
 type CertificateList struct {
 	unversioned.TypeMeta `json:",inline"`
-	v1.ObjectMeta        `json:"metadata"`
-	Items                []Certificate `json:"items"`
+	Metadata             unversioned.ListMeta `json:"metadata"`
+	Items                []Certificate        `json:"items"`
 }
 
 type ACMECertData struct {
