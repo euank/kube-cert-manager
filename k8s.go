@@ -327,7 +327,7 @@ func (k K8sClient) monitorCertificateEvents(namespace string, done <-chan struct
 		}
 	}
 
-	source := cache.NewListWatchFromClient(k.c.Extensions().RESTClient(), "certificates", v1.NamespaceAll, fields.Everything())
+	source := cache.NewListWatchFromClient(k.certClient.Extensions().RESTClient(), "certificates", v1.NamespaceAll, fields.Everything())
 	_, controller := cache.NewInformer(source, &Certificate{}, 0, cache.ResourceEventHandlerFuncs{
 		AddFunc:    evFunc("ADDED"),
 		DeleteFunc: evFunc("DELETED"),
