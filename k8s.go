@@ -12,7 +12,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
@@ -280,27 +279,18 @@ func (k K8sClient) getSecrets(namespace string) ([]v1.Secret, error) {
 	return list.Items, nil
 }
 
-func (k K8sClient) getCertificates(endpoint string) ([]Certificate, error) {
+func (k K8sClient) getCertificates(namespace string) ([]Certificate, error) {
 	var resp rest.Result
 
+	var certList CertificateList
 	for {
-		resp := k.c.Extensions().RESTClient().Get().AbsPath(endpoint).Do()
-		if resp.Error() != nil {
+		err := k.c.Extensions().RESTClient().Get().Resource("certificates").Namespace(namespace).Do().Into(&certList)
+		if err != nil {
 			log.Printf("Error while retrieving certificate: %v. Retrying in 5 seconds", resp.Error())
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		break
-	}
-
-	var certList CertificateList
-	body, err := resp.Raw()
-	if err != nil {
-		return nil, err
-	}
-	err = json.NewDecoder(bytes.NewReader(body)).Decode(&certList)
-	if err != nil {
-		return nil, err
 	}
 
 	return certList.Items, nil
