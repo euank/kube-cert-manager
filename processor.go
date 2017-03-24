@@ -534,22 +534,6 @@ func (p *CertProcessor) processCertificate(cert Certificate) (processed bool, er
 	return true, nil
 }
 
-func (p *CertProcessor) deleteCertificate(cert Certificate) error {
-	log.Printf("[%v] Deleting user info and certificate details", cert.Spec.Domain)
-	err := p.db.Update(func(tx *bolt.Tx) error {
-		key := []byte(cert.Spec.Domain)
-		tx.Bucket([]byte("user-info")).Delete(key)
-		tx.Bucket([]byte("cert-details")).Delete(key)
-		return nil
-	})
-
-	if err != nil {
-		return errors.Wrapf(err, "Error while saving data to bolt for domain %v", cert.Spec.Domain)
-	}
-
-	return nil
-}
-
 func (p *CertProcessor) gcSecrets() error {
 	p.Lock.Lock()
 	defer p.Lock.Unlock()
