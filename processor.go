@@ -42,9 +42,11 @@ import (
 	"github.com/xenolf/lego/providers/dns/route53"
 	"github.com/xenolf/lego/providers/dns/vultr"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/pkg/api/unversioned"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/rest"
 )
 
 // CertProcessor holds the shared configuration, state, and locks
@@ -67,7 +69,7 @@ type CertProcessor struct {
 // NewCertProcessor creates and populates a CertProcessor
 func NewCertProcessor(
 	k8s *kubernetes.Clientset,
-	certClient *kubernetes.Clientset,
+	certClient *rest.RESTClient,
 	acmeURL string,
 	certSecretPrefix string,
 	certNamespace string,
@@ -357,8 +359,8 @@ func (p *CertProcessor) processCertificate(cert Certificate) (processed bool, er
 			return false, errors.Wrapf(err, "Error while decoding x509 encoded certificate for existing domain %v", cert.Spec.Domain)
 		}
 
-		// If certificate expires in more than a week, don't renew
-		if parsedCert.NotAfter.After(time.Now().Add(time.Hour * 24 * 7)) {
+		// If certificate expires in more than 20 days, don't renew
+		if parsedCert.NotAfter.After(time.Now().Add(time.Hour * 24 * 20)) {
 			return false, nil
 		}
 
@@ -617,7 +619,7 @@ func ingressCertificates(p *CertProcessor, ingress v1beta1.Ingress) []Certificat
 				APIVersion: "v1",
 				Kind:       "Certificate",
 			},
-			Metadata: v1.ObjectMeta{
+			Metadata: api.ObjectMeta{
 				Namespace: ingress.Namespace,
 			},
 			Spec: CertificateSpec{
@@ -664,7 +666,7 @@ func (p *CertProcessor) processIngress(ingress v1beta1.Ingress) {
 				APIVersion: "v1",
 				Kind:       "Certificate",
 			},
-			Metadata: v1.ObjectMeta{
+			Metadata: api.ObjectMeta{
 				Namespace: ingress.Namespace,
 			},
 			Spec: CertificateSpec{

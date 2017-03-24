@@ -152,19 +152,8 @@ func main() {
 		log.Fatalf("error creating TPR Certificate client: %v", err)
 	}
 
-	result := certClient.Get().Resource("certificates").Do()
-	fmt.Println(result.Error())
-	b, _ := result.Raw()
-	fmt.Println(string(b))
-	var certs CertificateList
-	fmt.Println(result.Into(&certs))
-	fmt.Printf("%+v\n", certs)
-	if true {
-		os.Exit(0)
-	}
-
 	// Create the processor
-	p := NewCertProcessor(k8sClient, k8sClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
+	p := NewCertProcessor(k8sClient, certClient, acmeURL, certSecretPrefix, certNamespace, tagPrefix, namespaces, class, defaultProvider, defaultEmail, db)
 
 	// Asynchronously start watching and refreshing certs
 	wg := sync.WaitGroup{}

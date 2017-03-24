@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/xenolf/lego/acme"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api"
 	kerrors "k8s.io/client-go/pkg/api/errors"
 	"k8s.io/client-go/pkg/api/meta"
 	"k8s.io/client-go/pkg/api/unversioned"
@@ -44,7 +45,7 @@ const (
 // TODO: merge the two clients
 type K8sClient struct {
 	c          *kubernetes.Clientset
-	certClient *kubernetes.Clientset
+	certClient *rest.RESTClient
 }
 
 type WatchEvent struct {
@@ -59,7 +60,7 @@ type CertificateEvent struct {
 
 type Certificate struct {
 	unversioned.TypeMeta `json:",inline"`
-	Metadata             v1.ObjectMeta   `json:"metadata"`
+	Metadata             api.ObjectMeta  `json:"metadata"`
 	Spec                 CertificateSpec `json:"spec"`
 }
 
@@ -75,7 +76,7 @@ func (c *CertificateList) GetObjectKind() unversioned.ObjectKind {
 	return &c.TypeMeta
 }
 
-func (c *CertificateList) GetObjectMeta() unversioned.List {
+func (c *CertificateList) GetListMeta() unversioned.List {
 	return &c.Metadata
 }
 
@@ -295,13 +296,11 @@ func (k K8sClient) getSecrets(namespace string) ([]v1.Secret, error) {
 }
 
 func (k K8sClient) getCertificates(namespace string) ([]Certificate, error) {
-	var resp rest.Result
-
 	var certList CertificateList
 	for {
-		err := k.c.Extensions().RESTClient().Get().Resource("certificates").Namespace(namespace).Do().Into(&certList)
+		err := k.certClient.Get().Resource("certificates").Namespace(namespace).Do().Into(&certList)
 		if err != nil {
-			log.Printf("Error while retrieving certificate: %v. Retrying in 5 seconds", resp.Error())
+			log.Printf("Error while retrieving certificate: %v. Retrying in 5 seconds", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -342,7 +341,7 @@ func (k K8sClient) monitorCertificateEvents(namespace string, done <-chan struct
 		}
 	}
 
-	source := cache.NewListWatchFromClient(k.certClient.Extensions().RESTClient(), "certificates", v1.NamespaceAll, fields.Everything())
+	source := cache.NewListWatchFromClient(k.certClient, "certificates", v1.NamespaceAll, fields.Everything())
 	_, controller := cache.NewInformer(source, &Certificate{}, 0, cache.ResourceEventHandlerFuncs{
 		AddFunc:    evFunc("ADDED"),
 		DeleteFunc: evFunc("DELETED"),
