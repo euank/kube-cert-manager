@@ -664,7 +664,7 @@ func ingressCertificates(p *CertProcessor, ingress v1beta1.Ingress) []Certificat
 		return nil
 	}
 	for _, tls := range ingress.Spec.TLS {
-		if len(tls.Hosts) != 1 {
+		if len(tls.Hosts) < 1 {
 			continue
 		}
 		cert := Certificate{
@@ -677,6 +677,7 @@ func ingressCertificates(p *CertProcessor, ingress v1beta1.Ingress) []Certificat
 			},
 			Spec: CertificateSpec{
 				Domain:     tls.Hosts[0],
+				AltNames:   tls.Hosts[1:],
 				Provider:   provider,
 				Email:      email,
 				SecretName: tls.SecretName,
