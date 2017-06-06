@@ -422,7 +422,7 @@ func (p *CertProcessor) processCertificate(cert Certificate) (processed bool, er
 		}
 
 		// If certificate expires after now + p.renewBeforeDays, don't renew
-		if parsedCert.NotAfter.After(time.Now().Add(time.Hour * time.Duration(24 * p.renewBeforeDays))) {
+		if parsedCert.NotAfter.After(time.Now().Add(time.Hour * time.Duration(24*p.renewBeforeDays))) {
 			return false, nil
 		}
 
@@ -508,6 +508,9 @@ func (p *CertProcessor) processCertificate(cert Certificate) (processed bool, er
 			if errs[domain] != nil {
 				return false, errors.Wrapf(errs[domain], "Error while obtaining certificate for new domain %v", domain)
 			}
+		}
+		if len(errs) != 0 {
+			log.Printf("[WARN] some errors obtaining certificate: %+v", errs)
 		}
 
 		// fill in data
